@@ -1,3 +1,11 @@
+# binary file
+libshmlog.so
+shmlogtail
+testlibshmlog
+
+# Emacs temp file
+*~
+
 # Prerequisites
 *.d
 
