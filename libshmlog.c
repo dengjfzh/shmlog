@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 // #include <stdatomic.h> // C11
@@ -7,8 +8,12 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include "libshmlog.h"
 
+#define SHM_FILE_PATH "/dev/shm"
+
+static int g_regAtexit = 0;
 static int g_fd = -1;
 static void *g_addr = MAP_FAILED;
 static size_t g_size = 0;
@@ -19,11 +24,64 @@ static size_t g_msg_cnt = 0;
 //static volatile atomic_uint_least32_t g_atomic_next; // C11
 static volatile uint32_t g_atomic_next; // GCC builtins
 
+void onexit()
+{
+    if ( g_fd > 0 ) {
+        char filename[256];
+        snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+        shm_unlink(filename);
+        close(g_fd);
+        g_fd = -1;
+    }
+}
+
+int unlink_all_unuse()
+{
+    char filename[256];
+    struct stat statbuf;
+    DIR *dir;
+    struct dirent *dent;
+    int errbak, pid;
+    dir = opendir(SHM_FILE_PATH);
+    if ( NULL == dir ) {
+        return -1;
+    }
+    errno = 0;
+    while ( (dent = readdir(dir)) != NULL ) {
+        //fprintf(stderr, "%s: ino=%ld, off=%ld, reclen=%d, type=0x%02x\n",
+        //        dent->d_name, dent->d_ino, dent->d_off, dent->d_reclen, dent->d_type);
+        if ( DT_REG == dent->d_type ) {
+            //fprintf(stderr, "find shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
+            if ( sscanf(dent->d_name, SHM_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
+                snprintf(filename, sizeof(filename), "/proc/%d", pid);
+                //fprintf(stderr, "found shm with pid %d\n", pid);
+                if ( stat(filename, &statbuf) == -1 && ENOENT == errno ) {
+                    //fprintf(stderr, "process %d not found!\n", pid);
+                    snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", pid);
+                    if ( shm_unlink(filename) >= 0 ) {
+                        //fprintf(stderr, "file '%s' has been deleted.\n", filename);
+                    } else {
+                        //fprintf(stderr, "delete file '%s' failed.\n", filename);
+                    }
+                }
+            }
+        }
+    }
+    errbak = errno;
+    closedir(dir);
+    errno = errbak;
+    if ( 0 != errno ) {
+        return -1;
+    }
+    return 0;
+}
+
 int shmlog_init(size_t nmsg)
 {
     int errno_bak;
     char filename[256];
     const size_t size = sizeof(struct shmlog_fullheader) + SHMLOG_MSG_SIZE * nmsg;
+    unlink_all_unuse();
     if ( g_fd > 0 ) {
         return -1;
     }
@@ -53,6 +111,11 @@ int shmlog_init(size_t nmsg)
     g_msg_cnt = nmsg;
     //atomic_init(&g_atomic_next, 0); // C11
     g_atomic_next = 0; // GCC builtins
+    // register an exit function to unlink shm
+    if ( 0 == g_regAtexit ) {
+        g_regAtexit = 1;
+        atexit(onexit);
+    }
     return 0;
 FAILED:
     errno_bak = errno;
@@ -92,6 +155,7 @@ void shmlog_uninit()
         snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
         shm_unlink(filename);
     }
+    unlink_all_unuse();
 }
 
 int shmlog_write(const void *data, size_t len)

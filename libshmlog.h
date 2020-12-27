@@ -7,7 +7,7 @@ extern "C" {
 
 #include <stdint.h>
     
-#define SHM_FILE_PREFIX "dtrace-shm-"
+#define SHM_FILE_PREFIX "shmlog-"
 #define SHMLOG_MSG_SIZE 1024
 
 struct shmlog_header {

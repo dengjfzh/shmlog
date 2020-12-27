@@ -110,6 +110,8 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error: call mmap failed! %d:%s\n", errno, strerror(errno));
         return 1;
     }
+    close(fd);
+    fd = -1;
 
     // check ring buffer
     if ( (sizeof(struct shmlog_fullheader) + hdr->size * sizeof(struct shmlog_msg)) > statbuf.st_size ) {
@@ -153,7 +155,6 @@ int main(int argc, char *argv[])
 
     // finish
     munmap((void*)hdr, statbuf.st_size);
-    close(fd);
     fprintf(stderr, "total lost %ld, %ld times\n", total_lost, total_lost_cnt);
     return 0;
 }
