@@ -5,6 +5,7 @@
 extern "C" {
 #endif
 
+#include <stddef.h>
 #include <stdint.h>
 #include <stdatomic.h>
 
@@ -16,13 +17,13 @@ extern "C" {
     // #pragma message("atomic_int is always lock-free.")
 #endif
     
-#define SHM_FILE_PREFIX "shmlog-"
+#define SHM_FILE_PREFIX "dengjfzh-shmlog-"
 #define SHMLOG_MSG_SIZE_LOG2 8
 #define SHMLOG_MSG_SIZE (1<<SHMLOG_MSG_SIZE_LOG2)
 
 struct shmlog_header {
-    int size;
-    atomic_int next;
+    uint32_t nmsg;
+    atomic_uint next;
 };
 
 struct shmlog_fullheader {

@@ -1,23 +1,35 @@
 CFLAGS ?= -ggdb3 -O0
 override CFLAGS += -fPIC -Wall -std=gnu11
-override LDFLAGS += -lrt
 
 .PHONY: all
-all: libshmlog.so testlibshmlog shmlogtail
+all: libshmlog.so libshmlogclient.so shmlogtail testlibshmlog
 
 libshmlog.so: libshmlog.o
-	$(CC) $(LDFLAGS) -shared -o $@ $^
+	$(CC) $(LDFLAGS) -lrt -shared -o $@ $^
+
+libshmlogclient.so: libshmlogclient.o
+	$(CC) $(LDFLAGS) -lrt -shared -o $@ $^
 
 testlibshmlog: testlibshmlog.o libshmlog.so
-	$(CC) -L. -Wl,-rpath,'$$ORIGIN' -lshmlog -o $@ testlibshmlog.o
+	$(CC) $(LDFLAGS) -L. -Wl,-rpath,'$$ORIGIN' -lshmlog -o $@ testlibshmlog.o
 
-shmlogtail: shmlogtail.o
+shmlogtail: shmlogtail.o libshmlogclient.so
+	$(CC) $(LDFLAGS) -lrt -L. -Wl,-rpath,'$$ORIGIN' -lshmlogclient -o $@ shmlogtail.o
+
+
+libshmlog.o: libshmlog.c libshmlog.h
+libshmlogclient.o: libshmlogclient.c libshmlogclient.h
+shmlogtail.o: shmlogtail.c libshmlog.h
+testlibshmlog.o: testlibshmlog.c libshmlog.h
+
 
 .PHONY: test
 test: testlibshmlog shmlogtail
-	./testlibshmlog 1000000 &
+	./testlibshmlog $(TESTCNT) &
 	./shmlogtail `pidof testlibshmlog`
 
 .PHONY: clean
 clean:
-	@rm -f *.o libshmlog.so shmlogtail testlibshmlog
+	@rm -f *.o libshmlog.so libshmlogclient.so testlibshmlog shmlogtail
+
+TESTCNT := 1000000

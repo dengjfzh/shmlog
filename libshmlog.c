@@ -21,6 +21,11 @@ static struct shmlog_header *g_hdr = NULL;
 static struct shmlog_msg *g_msgs = NULL;
 static size_t g_msg_cnt = 0;
 
+#if 1
+#define LOG(fmt, arg...) fprintf(stderr, fmt, ##arg)
+#else
+#define LOG(fmt, arg...)
+#endif
 
 static void onexit()
 {
@@ -46,20 +51,20 @@ static int unlink_all_unuse()
     }
     errno = 0;
     while ( (dent = readdir(dir)) != NULL ) {
-        //fprintf(stderr, "%s: ino=%ld, off=%ld, reclen=%d, type=0x%02x\n",
-        //        dent->d_name, dent->d_ino, dent->d_off, dent->d_reclen, dent->d_type);
+        LOG("%s: ino=%ld, off=%ld, reclen=%d, type=0x%02x\n",
+            dent->d_name, dent->d_ino, dent->d_off, dent->d_reclen, dent->d_type);
         if ( DT_REG == dent->d_type ) {
-            //fprintf(stderr, "find shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
+            LOG("find shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
             if ( sscanf(dent->d_name, SHM_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
                 snprintf(filename, sizeof(filename), "/proc/%d", pid);
-                //fprintf(stderr, "found shm with pid %d\n", pid);
+                LOG("found shm with pid %d\n", pid);
                 if ( stat(filename, &statbuf) == -1 && ENOENT == errno ) {
-                    //fprintf(stderr, "process %d not found!\n", pid);
+                    LOG("process %d not found!\n", pid);
                     snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", pid);
                     if ( shm_unlink(filename) >= 0 ) {
-                        //fprintf(stderr, "file '%s' has been deleted.\n", filename);
+                        LOG("file '%s' has been deleted.\n", filename);
                     } else {
-                        //fprintf(stderr, "delete file '%s' failed.\n", filename);
+                        LOG("delete file '%s' failed.\n", filename);
                     }
                 }
             }
@@ -103,7 +108,7 @@ int shmlog_init(size_t nmsg)
     // setup global variables
     g_size = size;
     g_hdr = (struct shmlog_header *)g_addr;
-    g_hdr->size = nmsg;
+    g_hdr->nmsg = nmsg;
     atomic_init(&g_hdr->next, 0);
     g_msgs = (struct shmlog_msg *)(g_addr + sizeof(struct shmlog_fullheader));
     g_msg_cnt = nmsg;

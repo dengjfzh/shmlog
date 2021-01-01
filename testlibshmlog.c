@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <threads.h>
 #include <unistd.h>
 #include <sys/time.h>
 #include "libshmlog.h"
@@ -20,7 +21,7 @@ int main(int argc, char *argv[])
             fprintf(stderr, "testlibshmlog: Error: invalid number: %s\n", argv[1]);
         }
     }
-    shmlog_init(4096);
+    shmlog_init(16384);
     usleep(1000*500);
     gettimeofday(&start, NULL);
     for ( i = 0; i < cnt; i++ ) {
@@ -29,6 +30,7 @@ int main(int argc, char *argv[])
         len = 400;
         shmlog_write(msg, len);
         //usleep(1);
+        //thrd_yield();
     }
     gettimeofday(&end, NULL);
     escape.tv_sec = end.tv_sec - start.tv_sec;
@@ -39,7 +41,7 @@ int main(int argc, char *argv[])
         escape.tv_sec--;
     }
     fEscape = escape.tv_sec + escape.tv_usec / 1000000.0;
-    len = snprintf(msg, sizeof(msg), "testlibshmlog: end. %d log, escape %ld.%06lds, %.1f/s\n", i, escape.tv_sec, escape.tv_usec, i/fEscape);
+    len = snprintf(msg, sizeof(msg), "testlibshmlog: end. %d log, escape %ld.%06lds, %.1f/s", i, escape.tv_sec, escape.tv_usec, i/fEscape);
     shmlog_write(msg, len);
     shmlog_uninit();
     return 0;
