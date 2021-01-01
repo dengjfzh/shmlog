@@ -2,6 +2,7 @@ CFLAGS ?= -ggdb3 -O0
 override CFLAGS += -fPIC -Wall -std=gnu11
 override LDFLAGS += -lrt
 
+.PHONY: all
 all: libshmlog.so testlibshmlog shmlogtail
 
 libshmlog.so: libshmlog.o

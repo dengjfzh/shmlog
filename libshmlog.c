@@ -21,10 +21,8 @@ static struct shmlog_header *g_hdr = NULL;
 static struct shmlog_msg *g_msgs = NULL;
 static size_t g_msg_cnt = 0;
 
-//static volatile atomic_uint_least32_t g_atomic_next; // C11
-static volatile uint32_t g_atomic_next; // GCC builtins
 
-void onexit()
+static void onexit()
 {
     if ( g_fd > 0 ) {
         char filename[256];
@@ -35,7 +33,7 @@ void onexit()
     }
 }
 
-int unlink_all_unuse()
+static int unlink_all_unuse()
 {
     char filename[256];
     struct stat statbuf;
@@ -106,11 +104,9 @@ int shmlog_init(size_t nmsg)
     g_size = size;
     g_hdr = (struct shmlog_header *)g_addr;
     g_hdr->size = nmsg;
-    g_hdr->next = 0;
+    atomic_init(&g_hdr->next, 0);
     g_msgs = (struct shmlog_msg *)(g_addr + sizeof(struct shmlog_fullheader));
     g_msg_cnt = nmsg;
-    //atomic_init(&g_atomic_next, 0); // C11
-    g_atomic_next = 0; // GCC builtins
     // register an exit function to unlink shm
     if ( 0 == g_regAtexit ) {
         g_regAtexit = 1;
@@ -163,18 +159,16 @@ int shmlog_write(const void *data, size_t len)
     if ( g_fd < 0 || NULL == g_hdr || NULL == g_msgs || 0 == g_msg_cnt ) {
         return -1;
     }
-    if ( len > (SHMLOG_MSG_SIZE-sizeof(struct shmlog_msg_header)) ) {
-        len = SHMLOG_MSG_SIZE-sizeof(struct shmlog_msg_header);
+    if ( len > SHMLOG_MSG_BODY_SIZE ) {
+        len = SHMLOG_MSG_BODY_SIZE;
     }
-    // uint32_t mine = atomic_fetch_add(&g_atomic_next, 1); // C11
-    uint32_t mine = __sync_fetch_and_add(&g_atomic_next, 1); // GCC builtins
-    g_hdr->next = (uint16_t)(mine + 1);
+    uint32_t mine = atomic_fetch_add(&g_hdr->next, 1);
     mine %= g_msg_cnt;
-    g_msgs[mine].hdr.len = len;
+    g_msgs[mine].hdr.len = 0;
     memcpy(g_msgs[mine].body, data, len);
-    if ( len < (SHMLOG_MSG_SIZE-sizeof(struct shmlog_msg_header)) ) {
-        g_msgs[mine].body[len] = '\0';
+    if ( len < SHMLOG_MSG_BODY_SIZE ) {
+        memset(g_msgs[mine].body+len, 0, SHMLOG_MSG_BODY_SIZE-len);
     }
-    g_msgs[mine].hdr.use = 1;
+    g_msgs[mine].hdr.len = len;
     return 0;
 }

@@ -126,7 +126,7 @@ int main(int argc, char *argv[])
 
     // core loop
     size = hdr->size;
-    last = hdr->next;
+    last = atomic_load(&hdr->next);
     cnt = 0;
     total_lost = 0;
     total_lost_cnt = 0;
@@ -136,7 +136,7 @@ int main(int argc, char *argv[])
             usleep(1000*10);
         }
 
-        next = hdr->next;
+        next = atomic_load(&hdr->next);
         cnt = next - last;
         if ( cnt > size ) {
             total_lost += cnt - size;
@@ -148,7 +148,8 @@ int main(int argc, char *argv[])
             for ( ; last != next; last++ ) {
                 idx = last % size;
                 fwrite((void*)msgs[idx].body, 1, msgs[idx].hdr.len, stdout);
-                fwrite("\n", 1, 1, stdout);
+                //fwrite("\n", 1, 1, stdout);
+                fprintf(stdout, " (%dbytes)\n", msgs[idx].hdr.len);
             }
         }
     }
