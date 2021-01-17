@@ -13,12 +13,11 @@ struct shm_log_client_t {
     size_t size;
     struct shmlog_header *hdr;
     struct shmlog_msg *msgs;
-    uint32_t last; // last read position
 };
 
 int shmlogclient_init(pid_t pid, struct shm_log_client_t *client);
 void shmlogclient_uninit(struct shm_log_client_t *client);
-int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, size_t *lost);
+int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, size_t *lost, int timeout_us);
 
 #ifdef __cplusplus
 }

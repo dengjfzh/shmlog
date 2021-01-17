@@ -1,11 +1,19 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <threads.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include "libshmlogclient.h"
+
+#if 1
+#define LOG(fmt, arg...) fprintf(stderr, fmt, ##arg)
+#else
+#define LOG(fmt, arg...)
+#endif
 
 int shmlogclient_init(pid_t pid, struct shm_log_client_t *client)
 {
@@ -28,10 +36,10 @@ int shmlogclient_init(pid_t pid, struct shm_log_client_t *client)
         return -1;
     }
     snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", pid);
-    fd = shm_open(filename, O_RDONLY, 0666);
+    fd = shm_open(filename, O_RDWR, 0666);
     if ( fd < 0 )
         return -1;
-    hdr = (struct shmlog_header *)mmap(NULL, statbuf.st_size, PROT_READ, MAP_SHARED, fd, 0);
+    hdr = (struct shmlog_header *)mmap(NULL, statbuf.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if ( NULL == hdr ) {
         errbak = errno;
         close(fd);
@@ -51,7 +59,6 @@ int shmlogclient_init(pid_t pid, struct shm_log_client_t *client)
     client->size = statbuf.st_size;
     client->hdr = hdr;
     client->msgs = (struct shmlog_msg *)((uint8_t*)hdr + sizeof(struct shmlog_fullheader));
-    client->last = atomic_load(&hdr->next);
     return 0;
 }
 
@@ -66,34 +73,58 @@ void shmlogclient_uninit(struct shm_log_client_t *client)
     }
 }
 
-int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, size_t *lost)
+int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, size_t *lost, int timeout_us)
 {
     struct shmlog_header *hdr;
-    uint32_t nmsg, next, last, cnt, idx, len;
+    struct shmlog_msg *msgs;
+    int_headtail ht_old, ht_new, head, tail, head_new;
+    bool empty;
+    int empty_wait, total_wait, len;
     if ( NULL == client ) {
-        errno = EINVAL;
         return -1;
     }
-    hdr = client->hdr;
-    nmsg = hdr->nmsg;
-    next = atomic_load(&hdr->next);
-    last = client->last;
-    if ( next == last )
-        return 0;
-    cnt = next - last;
-    if ( cnt > nmsg ) {
-        if ( NULL != lost )
-            *lost = cnt - nmsg;
-        last = next - nmsg;
-    } else {
-        if ( NULL != lost )
-            *lost = 0;
+    if ( NULL != lost ) {
+        *lost = 0;
     }
-    idx = last % nmsg;
-    len = (client->msgs[idx].hdr.len < size) ? client->msgs[idx].hdr.len : size;
-    memcpy(buf, client->msgs[idx].body, len);
-    if ( len < size )
-        *((uint8_t*)buf + len) = 0;
-    client->last = last + 1;
+    hdr = client->hdr;
+    msgs = client->msgs;
+    empty_wait = 1;
+    total_wait = 0;
+    ht_old = atomic_load(&hdr->headtail);
+    do {
+        head = GET_HEAD(ht_old);
+        tail = GET_TAIL(ht_old);
+        if ( head > tail ) {
+            LOG("[dengjfzh/libshmlogclient] Internal Error: head(%lu) > tail(%lu)! %s:%d\n", head, tail, __FILE__, __LINE__);
+            abort();
+        }
+        if ( head == tail ) { // empty
+            if ( timeout_us >= 0 && total_wait >= timeout_us ) {
+                return 0;
+            }
+            empty = true;
+            if ( empty_wait < 65536 ) {
+                empty_wait *= 2;
+            }
+            usleep(empty_wait);
+            total_wait += empty_wait;
+            ht_old = atomic_load(&hdr->headtail);
+            continue;
+        }
+        empty = false;
+        empty_wait = 1;
+        head_new = head + 1;
+        if ( head_new > hdr->nmsg ) {
+            head_new -= hdr->nmsg;
+            tail -= hdr->nmsg;
+        }
+        ht_new = MAKE_HT(head_new, tail);
+    } while ( empty || !atomic_compare_exchange_weak(&hdr->headtail, &ht_old, ht_new) );
+    while ( !atomic_load(&msgs[head].hdr.filled) ){
+        thrd_yield();
+    }
+    len = (msgs[head].hdr.len < size) ? (int)(msgs[head].hdr.len) : (int)(size);
+    memcpy(buf, msgs[head].body, len);
+    atomic_store(&msgs[head].hdr.filled, false);
     return len;
 }

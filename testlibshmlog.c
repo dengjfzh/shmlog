@@ -44,5 +44,6 @@ int main(int argc, char *argv[])
     len = snprintf(msg, sizeof(msg), "testlibshmlog: end. %d log, escape %ld.%06lds, %.1f/s", i, escape.tv_sec, escape.tv_usec, i/fEscape);
     shmlog_write(msg, len);
     shmlog_uninit();
+    fprintf(stderr, "%s\n", msg);
     return 0;
 }

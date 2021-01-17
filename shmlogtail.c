@@ -18,7 +18,7 @@ void sig_handle(int sig)
     g_requestExit = 1;
 }
 
-#if 0
+#if 1
 
 int main(int argc, char *argv[])
 {
@@ -97,7 +97,7 @@ int main(int argc, char *argv[])
     total_lost_cnt = 0;
     while ( !g_requestExit ) {
 
-        ret = shmlogclient_read(&client, buf, sizeof(buf), &lost);
+        ret = shmlogclient_read(&client, buf, sizeof(buf), &lost, 1000*500);
         if ( ret < 0 ) {
             fprintf(stderr, "Error: read message! %d:%s\n", errno, strerror(errno));
             break;
@@ -110,13 +110,15 @@ int main(int argc, char *argv[])
             // stat.
             total_read++;
             total_lost += lost;
-            total_lost_cnt++;
+            if ( lost > 0 ) {
+                total_lost_cnt++;
+            }
         }
     }
 
     // finish
     shmlogclient_uninit(&client);
-    fprintf(stderr, "total read %ld, total lost %ld, %ld times\n", total_read, total_lost, total_lost_cnt);
+    fprintf(stderr, "total read %ld messages, total lost %ld messages in %ld times\n", total_read, total_lost, total_lost_cnt);
     return 0;
 }
 
