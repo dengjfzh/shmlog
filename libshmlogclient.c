@@ -28,17 +28,21 @@ int shmlogclient_init(pid_t pid, struct shm_log_client_t *client)
     }
 
     // open shm
-    snprintf(filename, sizeof(filename), "/dev/shm/" SHM_FILE_PREFIX "%d", pid);
-    if ( stat(filename, &statbuf) < 0 )
-        return -1;
-    if ( statbuf.st_size < sizeof(struct shmlog_fullheader) ) {
-        errno = ENOMEM;
-        return -1;
-    }
     snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", pid);
     fd = shm_open(filename, O_RDWR, 0666);
     if ( fd < 0 )
         return -1;
+    if ( fstat(fd, &statbuf) < 0 ) {
+        errbak = errno;
+        close(fd);
+        errno = errbak;
+        return -1;
+    }
+    if ( statbuf.st_size < sizeof(struct shmlog_fullheader) ) {
+        close(fd);
+        errno = ENOMEM;
+        return -1;
+    }
     hdr = (struct shmlog_header *)mmap(NULL, statbuf.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if ( NULL == hdr ) {
         errbak = errno;
