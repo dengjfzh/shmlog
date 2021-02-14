@@ -10,11 +10,12 @@
 int main(int argc, char *argv[])
 {
     char msg[1024];
-    int cnt, i, len;
+    int cnt, failed_cnt, i, len, ret;
     struct timeval start, end, escape;
     double fEscape;
     fprintf(stderr, "testlibshmlog: start ...\n");
     cnt = 200;
+    failed_cnt = 0;
     if ( argc > 1 ) {
         cnt = atoi(argv[1]);
         if ( cnt <= 0 ) {
@@ -28,7 +29,10 @@ int main(int argc, char *argv[])
         //len = sprintf(msg, "msg %d", i);
         memset(msg, '0' + i%10, 400);
         len = 400;
-        shmlog_write(msg, len);
+        ret = shmlog_write(msg, len);
+        if ( ret <= 0 ) {
+            failed_cnt++;
+        }
         //usleep(1);
         //thrd_yield();
     }
@@ -41,7 +45,7 @@ int main(int argc, char *argv[])
         escape.tv_sec--;
     }
     fEscape = escape.tv_sec + escape.tv_usec / 1000000.0;
-    len = snprintf(msg, sizeof(msg), "testlibshmlog: end. %d log, escape %ld.%06lds, %.1f/s", i, escape.tv_sec, escape.tv_usec, i/fEscape);
+    len = snprintf(msg, sizeof(msg), "testlibshmlog: end. %d log, %d failed, escape %ld.%06lds, %.1f/s", i, failed_cnt, escape.tv_sec, escape.tv_usec, i/fEscape);
     shmlog_write(msg, len);
     shmlog_uninit();
     fprintf(stderr, "%s\n", msg);

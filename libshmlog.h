@@ -45,10 +45,11 @@ extern "C" {
 
 struct shmlog_header {
     uint32_t nmsg;
-/* todo:
-    atomic_int required; // A required client reference count that decides how to operate when the queue is full:
-                         // if required == 0, the oldest msg will be overwritten, otherwise `push` will be blocked.
-*/
+
+    atomic_int consumer_pid; // consumer pid decides how to operate when the queue is full:
+                             // if consumer_pid <= 0, the oldest msg will be overwritten immediately,
+                             // otherwise `push` will be blocked for a moment (about 150ms) if no message is consumed, then the oldest msg will be overwritten.
+
     atomic_headtail headtail;
 };
 

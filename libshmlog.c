@@ -12,7 +12,7 @@
 #include "libshmlog.h"
 
 #define SHM_FILE_PATH "/dev/shm"
-#define FULL_RETRY_MAX 32
+#define FULL_RETRY_MAX 16
 
 static int g_regAtexit = 0;
 static int g_fd = -1;
@@ -110,6 +110,7 @@ int shmlog_init(size_t nmsg)
     g_size = size;
     g_hdr = (struct shmlog_header *)g_addr;
     g_hdr->nmsg = nmsg;
+    atomic_init(&g_hdr->consumer_pid, 0);
     atomic_init(&g_hdr->headtail, 0);
     g_msgs = (struct shmlog_msg *)(g_addr + sizeof(struct shmlog_fullheader));
     g_msg_cnt = nmsg;
@@ -165,7 +166,7 @@ void shmlog_uninit()
 
 int shmlog_write(const void *data, size_t len)
 {
-    int_headtail ht_old, ht_new, head, tail, tail_new;
+    int_headtail ht_old, ht_new, head, tail, head_new, tail_new;
     bool full;
     int full_retry, full_wait;
     if ( g_fd < 0 || NULL == g_hdr || NULL == g_msgs || 0 == g_msg_cnt ) {
@@ -184,25 +185,35 @@ int shmlog_write(const void *data, size_t len)
             LOG("[dengjfzh/libshmlog] Internal Error: head(%lu) > tail(%lu)! %s:%d\n", head, tail, __FILE__, __LINE__);
             abort();
         }
+        head_new = head;
         tail_new = tail + 1;
-        if ( (tail_new - head) > g_hdr->nmsg ) { // full
-            full = true;
-            full_retry++;
-            if ( full_retry > FULL_RETRY_MAX ) {
-                return 0;
+        if ( (tail_new - head_new) > g_hdr->nmsg ) { // full
+            if ( atomic_load(&g_hdr->consumer_pid) > 0 && full_retry < FULL_RETRY_MAX ) {
+                // wait a moment if there is a consumer
+                full = true;
+                full_retry++;
+                if ( full_wait < 65536 ) {
+                    full_wait *= 2;
+                }
+                usleep(full_wait);
+                ht_old = atomic_load(&g_hdr->headtail);
+                continue;
             }
-            if ( full_wait < 65536 ) {
-                full_wait *= 2;
+            // overwrite oldest msg
+            head_new = head + 1;
+            if ( head_new > g_hdr->nmsg ) {
+                head_new -= g_hdr->nmsg;
+                tail_new -= g_hdr->nmsg;
             }
-            usleep(full_wait);
-            ht_old = atomic_load(&g_hdr->headtail);
-            continue;
         }
         full = false;
         full_retry = 0;
         full_wait = 1;
-        ht_new = MAKE_HT(head, tail_new);
+        ht_new = MAKE_HT(head_new, tail_new);
     } while ( full || !atomic_compare_exchange_weak(&g_hdr->headtail, &ht_old, ht_new) );
+    if ( head_new != head ) { // oldest msg has been removed
+        atomic_store(&g_msgs[head].hdr.filled, false);
+    }
     if ( tail > g_hdr->nmsg ) {
         tail -= g_hdr->nmsg;
     }

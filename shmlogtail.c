@@ -24,13 +24,15 @@ int main(int argc, char *argv[])
 {
     static const char *usage = "Usage: dtracetail [options]... [pid]\n"\
             "output the last party of dtrace ring buffer.\n\n"         \
-            "options:\n\t-h,--help\n\t-p,--pid <number>\n";
+            "options:\n\t-h,--help\n\t-p,--pid <number>\n\t-n,--nonblock\n";
     static struct option opts[] = {
         {"help", 0, NULL, 'h'},
         {"pid", 1, NULL, 'p'},
+        {"nonblock", 0, NULL, 'n'},
         {NULL, 0, NULL, 0}
     };
     pid_t pid = -1;
+    int nonblock = 0;
     int o, ret;
     struct shm_log_client_t client;
     size_t lost;
@@ -39,7 +41,7 @@ int main(int argc, char *argv[])
 
     // command line parse
     opterr = 0;
-    while ( (o = getopt_long(argc, argv, ":hp:", opts, NULL)) != EOF ) {
+    while ( (o = getopt_long(argc, argv, ":hp:n", opts, NULL)) != EOF ) {
         switch ( o ) {
             case 'h':
                 puts(usage);
@@ -49,6 +51,9 @@ int main(int argc, char *argv[])
                     fprintf(stderr, "Error: invalid pid '%s'!\n", optarg);
                     return 1;
                 }
+                break;
+            case 'n':
+                nonblock = 1;
                 break;
             case ':':
                 fprintf(stderr, "Error: missing option argument for option '%s'!\n", argv[optind-1]);
@@ -82,7 +87,7 @@ int main(int argc, char *argv[])
     fprintf(stderr, "pid = %d\n", pid);
 
     // open shm
-    ret = shmlogclient_init(pid, &client);
+    ret = shmlogclient_init(pid, &client, nonblock);
     if ( ret < 0 ) {
         fprintf(stderr, "Error: initialize failed! %d:%s\n", errno, strerror(errno));
         return 1;
@@ -113,6 +118,13 @@ int main(int argc, char *argv[])
             if ( lost > 0 ) {
                 total_lost_cnt++;
             }
+            // test
+            //if ( (client.hdr->nmsg / 2) == (total_read % client.hdr->nmsg) ) {
+            //    fprintf(stderr, "!!!pause!!!\n");
+            //    usleep(1000*100);
+            //    fprintf(stderr, "!!!resume!!!\n");
+            //}
+            // test end
         }
     }
 

@@ -26,10 +26,15 @@ testlibshmlog.o: testlibshmlog.c libshmlog.h
 .PHONY: test
 test: testlibshmlog shmlogtail
 	./testlibshmlog $(TESTCNT) &
+ifeq ($(NONBLOCK),0)
 	./shmlogtail `pidof testlibshmlog`
+else
+	./shmlogtail --nonblock `pidof testlibshmlog`
+endif
 
 .PHONY: clean
 clean:
 	@rm -f *.o libshmlog.so libshmlogclient.so testlibshmlog shmlogtail
 
 TESTCNT := 1000000
+NONBLOCK := 0

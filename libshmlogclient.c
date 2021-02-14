@@ -15,7 +15,7 @@
 #define LOG(fmt, arg...)
 #endif
 
-int shmlogclient_init(pid_t pid, struct shm_log_client_t *client)
+int shmlogclient_init(pid_t pid, struct shm_log_client_t *client, int nonblock)
 {
     char filename[256];
     struct stat statbuf;
@@ -63,6 +63,16 @@ int shmlogclient_init(pid_t pid, struct shm_log_client_t *client)
     client->size = statbuf.st_size;
     client->hdr = hdr;
     client->msgs = (struct shmlog_msg *)((uint8_t*)hdr + sizeof(struct shmlog_fullheader));
+    client->last_head = GET_HEAD(atomic_load(&hdr->headtail));
+    client->nonblock = nonblock;
+    client->pid_self = getpid();
+
+    if ( !nonblock ) {
+        // register consumer if there is no one. this will block producer for a moment if queue is full
+        int consumer_pid_old = 0;
+        atomic_compare_exchange_strong(&hdr->consumer_pid, &consumer_pid_old, client->pid_self);
+    }
+    
     return 0;
 }
 
@@ -73,6 +83,10 @@ void shmlogclient_uninit(struct shm_log_client_t *client)
         hdr = client->hdr;
         client->hdr = NULL;
         client->msgs = NULL;
+        // unregister consumer
+        int consumer_pid_old = client->pid_self;
+        atomic_compare_exchange_strong(&hdr->consumer_pid, &consumer_pid_old, 0);
+        //
         munmap((void*)hdr, client->size);
     }
 }
@@ -92,6 +106,11 @@ int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, s
     }
     hdr = client->hdr;
     msgs = client->msgs;
+    if ( !client->nonblock ) {
+        // register consumer if there is no one. this will block producer for a moment if queue is full
+        int consumer_pid_old = 0;
+        atomic_compare_exchange_strong(&hdr->consumer_pid, &consumer_pid_old, client->pid_self);
+    }
     empty_wait = 1;
     total_wait = 0;
     ht_old = atomic_load(&hdr->headtail);
@@ -124,6 +143,10 @@ int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, s
         }
         ht_new = MAKE_HT(head_new, tail);
     } while ( empty || !atomic_compare_exchange_weak(&hdr->headtail, &ht_old, ht_new) );
+    if ( NULL != lost ) {
+        *lost = head + ((head<client->last_head) ? hdr->nmsg : 0) - client->last_head;
+    }
+    client->last_head = head_new;
     while ( !atomic_load(&msgs[head].hdr.filled) ){
         thrd_yield();
     }
