@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <string.h>
 #include <threads.h>
+#include <signal.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -182,22 +183,33 @@ int shmlog_write(const void *data, size_t len)
         head = GET_HEAD(ht_old);
         tail = GET_TAIL(ht_old);
         if ( head > tail ) {
-            LOG("[dengjfzh/libshmlog] Internal Error: head(%lu) > tail(%lu)! %s:%d\n", head, tail, __FILE__, __LINE__);
+            LOG("[dengjfzh/libshmlog] Internal Error: head(%lu) > tail(%lu)! %s:%d\n",
+                head, tail, __FILE__, __LINE__);
             abort();
         }
         head_new = head;
         tail_new = tail + 1;
         if ( (tail_new - head_new) > g_hdr->nmsg ) { // full
-            if ( atomic_load(&g_hdr->consumer_pid) > 0 && full_retry < FULL_RETRY_MAX ) {
-                // wait a moment if there is a consumer
-                full = true;
-                full_retry++;
-                if ( full_wait < 65536 ) {
-                    full_wait *= 2;
+            const pid_t consumer_pid = atomic_load(&g_hdr->consumer_pid);
+            if ( consumer_pid > 0 ) {
+                if ( full_retry < FULL_RETRY_MAX ) {
+                    // wait a moment if there is a consumer
+                    full = true;
+                    full_retry++;
+                    if ( full_wait < 65536 ) {
+                        full_wait *= 2;
+                    }
+                    usleep(full_wait);
+                    ht_old = atomic_load(&g_hdr->headtail);
+                    continue;
                 }
-                usleep(full_wait);
-                ht_old = atomic_load(&g_hdr->headtail);
-                continue;
+                // consumer timeout, remve it
+                if ( kill(consumer_pid, 0) < 0 && ESRCH == errno ) {
+                    if ( atomic_compare_exchange_strong(&g_hdr->consumer_pid, &consumer_pid, 0) ) {
+                        LOG("[dengjfzh/libshmlog] Warning: consumer %d has been removed! %s:%d\n",
+                            consumer_pid, __FILE__, __LINE__);
+                    }
+                }
             }
             // overwrite oldest msg
             head_new = head + 1;

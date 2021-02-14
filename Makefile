@@ -26,11 +26,7 @@ testlibshmlog.o: testlibshmlog.c libshmlog.h
 .PHONY: test
 test: testlibshmlog shmlogtail
 	./testlibshmlog $(TESTCNT) &
-ifeq ($(NONBLOCK),0)
-	./shmlogtail `pidof testlibshmlog`
-else
-	./shmlogtail --nonblock `pidof testlibshmlog`
-endif
+	./shmlogtail $(TAILFLAGS) `pidof testlibshmlog`
 
 .PHONY: clean
 clean:
@@ -38,3 +34,6 @@ clean:
 
 TESTCNT := 1000000
 NONBLOCK := 0
+	ifneq ($(NONBLOCK),0)
+TAILFLAGS := --nonblock
+	endif
