@@ -167,7 +167,8 @@ void shmlog_uninit()
 
 int shmlog_write(const void *data, size_t len)
 {
-    int_headtail ht_old, ht_new, head, tail, head_new, tail_new;
+    int_headtail ht_old, ht_new;
+    int_head head, tail, head_new, tail_new;
     bool full;
     int full_retry, full_wait;
     if ( g_fd < 0 || NULL == g_hdr || NULL == g_msgs || 0 == g_msg_cnt ) {
@@ -183,7 +184,7 @@ int shmlog_write(const void *data, size_t len)
         head = GET_HEAD(ht_old);
         tail = GET_TAIL(ht_old);
         if ( head > tail ) {
-            LOG("[dengjfzh/libshmlog] Internal Error: head(%lu) > tail(%lu)! %s:%d\n",
+            LOG("[dengjfzh/libshmlog] Internal Error: head(%u) > tail(%u)! %s:%d\n",
                 head, tail, __FILE__, __LINE__);
             abort();
         }
@@ -213,9 +214,10 @@ int shmlog_write(const void *data, size_t len)
             }
             // overwrite oldest msg
             head_new = head + 1;
-            if ( head_new > g_hdr->nmsg ) {
-                head_new -= g_hdr->nmsg;
-                tail_new -= g_hdr->nmsg;
+            if ( head_new >= INTHEAD_MAX ) {
+                int_head tmp = (head_new / g_hdr->nmsg) * g_hdr->nmsg;
+                head_new -= tmp;
+                tail_new -= tmp;
             }
         }
         full = false;
@@ -224,10 +226,11 @@ int shmlog_write(const void *data, size_t len)
         ht_new = MAKE_HT(head_new, tail_new);
     } while ( full || !atomic_compare_exchange_weak(&g_hdr->headtail, &ht_old, ht_new) );
     if ( head_new != head ) { // oldest msg has been removed
+        head %= g_hdr->nmsg;
         atomic_store(&g_msgs[head].hdr.filled, false);
     }
-    if ( tail > g_hdr->nmsg ) {
-        tail -= g_hdr->nmsg;
+    if ( tail >= g_hdr->nmsg ) {
+        tail %= g_hdr->nmsg;
     }
     while ( atomic_load(&g_msgs[tail].hdr.filled) ) {
         thrd_yield();

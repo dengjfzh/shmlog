@@ -30,15 +30,19 @@ extern "C" {
     #define GET_HEAD(ht) ((uint32_t)(((uint64_t)(ht))>>32))
     #define GET_TAIL(ht) ((uint32_t)(ht))
     #define MAKE_HT(head, tail) ((((uint64_t)(head))<<32)+(uint32_t)(tail))
+    #define INTHEAD_MAX UINT32_MAX
     typedef atomic_ullong atomic_headtail;
     typedef uint64_t int_headtail;
+    typedef uint32_t int_head;
 #elif ATOMIC_LONG_LOCK_FREE == 2
     #define LIBSHMLOG_ATOMIC_SIZE 32
     #define GET_HEAD(ht) ((uint16_t)(((uint32_t)(ht))>>16))
     #define GET_TAIL(ht) ((uint16_t)(ht))
     #define MAKE_HT(head, tail) ((((uint32_t)(head))<<16)+(uint16_t)(tail))
+    #define INTHEAD_MAX UINT16_MAX
     typedef atomic_ulong atomic_headtail;
     typedef uint32_t int_headtail;
+    typedef uint16_t int_head;
 #else
     #error atomic_ulong is not lock-free!
 #endif

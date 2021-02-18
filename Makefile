@@ -34,6 +34,10 @@ clean:
 
 TESTCNT := 1000000
 NONBLOCK := 0
+DROP := 0
 	ifneq ($(NONBLOCK),0)
-TAILFLAGS := --nonblock
+TAILFLAGS += --nonblock
+	endif
+	ifneq ($(DROP),0)
+TAILFLAGS += --drop
 	endif

@@ -9,7 +9,7 @@
 
 int main(int argc, char *argv[])
 {
-    char msg[1024];
+    char msg[SHMLOG_MSG_SIZE];
     int cnt, failed_cnt, i, len, ret;
     struct timeval start, end, escape;
     double fEscape;
@@ -22,13 +22,13 @@ int main(int argc, char *argv[])
             fprintf(stderr, "testlibshmlog: Error: invalid number: %s\n", argv[1]);
         }
     }
-    shmlog_init(16384);
+    shmlog_init(64);
     usleep(1000*500);
     gettimeofday(&start, NULL);
     for ( i = 0; i < cnt; i++ ) {
-        //len = sprintf(msg, "msg %d", i);
-        memset(msg, '0' + i%10, 400);
-        len = 400;
+        len = sprintf(msg, "%d:", i);
+        memset(msg+len, '0' + i%10, SHMLOG_MSG_SIZE/2-len);
+        len = SHMLOG_MSG_SIZE/2;
         ret = shmlog_write(msg, len);
         if ( ret <= 0 ) {
             failed_cnt++;
