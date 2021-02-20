@@ -10,16 +10,23 @@
 int main(int argc, char *argv[])
 {
     char msg[SHMLOG_MSG_SIZE];
-    int cnt, failed_cnt, i, len, ret;
+    int cnt, delay, failed_cnt, i, len, ret;
     struct timeval start, end, escape;
     double fEscape;
     fprintf(stderr, "testlibshmlog: start ...\n");
     cnt = 200;
+    delay = -1;
     failed_cnt = 0;
     if ( argc > 1 ) {
         cnt = atoi(argv[1]);
         if ( cnt <= 0 ) {
             fprintf(stderr, "testlibshmlog: Error: invalid number: %s\n", argv[1]);
+        }
+    }
+    if ( argc > 2 ) {
+        delay = atoi(argv[2]);
+        if ( delay <= 0 ) {
+            fprintf(stderr, "testlibshmlog: Error: invalid number: %s\n", argv[2]);
         }
     }
     shmlog_init(64);
@@ -33,8 +40,11 @@ int main(int argc, char *argv[])
         if ( ret <= 0 ) {
             failed_cnt++;
         }
-        //usleep(1);
-        //thrd_yield();
+        if ( 0 == delay ) {
+            thrd_yield();
+        } else if ( delay > 0 ) {
+            usleep(delay);
+        }
     }
     gettimeofday(&end, NULL);
     escape.tv_sec = end.tv_sec - start.tv_sec;

@@ -33,10 +33,10 @@ clean:
 	@rm -f *.o libshmlog.so libshmlogclient.so testlibshmlog shmlogtail
 
 TESTCNT := 1000000
-NONBLOCK := 0
+BLOCK := 0
 DROP := 0
-	ifneq ($(NONBLOCK),0)
-TAILFLAGS += --nonblock
+	ifneq ($(BLOCK),0)
+TAILFLAGS += --block
 	endif
 	ifneq ($(DROP),0)
 TAILFLAGS += --drop
