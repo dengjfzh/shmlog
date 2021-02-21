@@ -10,10 +10,16 @@
 #include "libshmlogclient.h"
 
 #if 1
-#define LOG(fmt, arg...) fprintf(stderr, fmt, ##arg)
+#define LOG(fmt, arg...) fprintf(stderr, "<%s:%d> " fmt, __FILE__, __LINE__, ##arg)
 #else
 #define LOG(fmt, arg...)
 #endif
+
+#define GET_HEAD(ht) SHMLOG_GET_HEAD(ht)
+#define GET_TAIL(ht) SHMLOG_GET_TAIL(ht)
+#define MAKE_HT(head, tail) SHMLOG_MAKE_HT(head, tail)
+#define INTHEAD_MAX SHMLOG_INTHEAD_MAX
+
 
 int shmlogclient_init(pid_t pid, struct shm_log_client_t *client, int nonblock)
 {
@@ -28,23 +34,28 @@ int shmlogclient_init(pid_t pid, struct shm_log_client_t *client, int nonblock)
     }
 
     // open shm
-    snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", pid);
+    snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", pid);
     fd = shm_open(filename, O_RDWR, 0666);
-    if ( fd < 0 )
+    if ( fd < 0 ) {
+        LOG("Error: shm_open failed! %d:%s\n", errno, strerror(errno));
         return -1;
+    }
     if ( fstat(fd, &statbuf) < 0 ) {
+        LOG("Error: fstat failed! %d:%s\n", errno, strerror(errno));
         errbak = errno;
         close(fd);
         errno = errbak;
         return -1;
     }
     if ( statbuf.st_size < sizeof(struct shmlog_fullheader) ) {
+        LOG("Error: invalid shm size %lu\n", statbuf.st_size);
         close(fd);
         errno = ENOMEM;
         return -1;
     }
     hdr = (struct shmlog_header *)mmap(NULL, statbuf.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if ( NULL == hdr ) {
+        LOG("Error: mmap failed! %d:%s\n", errno, strerror(errno));
         errbak = errno;
         close(fd);
         errno = errbak;
@@ -54,6 +65,7 @@ int shmlogclient_init(pid_t pid, struct shm_log_client_t *client, int nonblock)
 
     // check ring buffer
     if ( (sizeof(struct shmlog_fullheader) + hdr->nmsg * sizeof(struct shmlog_msg)) > statbuf.st_size ) {
+        LOG("Error: invalid shm size %lu\n", statbuf.st_size);
         munmap((void*)hdr, statbuf.st_size);
         errno = ENOMEM;
         return -1;
@@ -96,8 +108,8 @@ int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, s
 {
     struct shmlog_header *hdr;
     struct shmlog_msg *msgs;
-    int_headtail ht_old, ht_new;
-    int_head head, tail, head_new, tail_new;
+    shmlog_int_headtail ht_old, ht_new;
+    shmlog_int_head head, tail, head_new, tail_new;
     bool empty;
     int empty_wait, total_wait, len;
     if ( NULL == client ) {
@@ -143,7 +155,7 @@ int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, s
         head_new = head + 1;
         tail_new = tail;
         if ( head_new >= hdr->nmsg ) {
-            int_head tmp = (head_new / hdr->nmsg) * hdr->nmsg;
+            shmlog_int_head tmp = (head_new / hdr->nmsg) * hdr->nmsg;
             head_new -= tmp;
             tail_new -= tmp;
         }
@@ -170,8 +182,8 @@ int shmlogclient_zerocopy_read(struct shm_log_client_t *client, void **pbuf, siz
 {
     struct shmlog_header *hdr;
     struct shmlog_msg *msgs;
-    int_headtail ht_old, ht_new;
-    int_head head, tail, head_new, tail_new;
+    shmlog_int_headtail ht_old, ht_new;
+    shmlog_int_head head, tail, head_new, tail_new;
     bool empty;
     int empty_wait, total_wait;
     if ( NULL == client ) {
@@ -217,7 +229,7 @@ int shmlogclient_zerocopy_read(struct shm_log_client_t *client, void **pbuf, siz
         head_new = head + 1;
         tail_new = tail;
         if ( head_new >= hdr->nmsg ) {
-            int_head tmp = (head_new / hdr->nmsg) * hdr->nmsg;
+            shmlog_int_head tmp = (head_new / hdr->nmsg) * hdr->nmsg;
             head_new -= tmp;
             tail_new -= tmp;
         }
@@ -241,7 +253,7 @@ int shmlogclient_zerocopy_read(struct shm_log_client_t *client, void **pbuf, siz
     return head;
 }
 
-int shmlogclient_zerocopy_free(struct shm_log_client_t *client, int_headtail bufid)
+int shmlogclient_zerocopy_free(struct shm_log_client_t *client, shmlog_int_headtail bufid)
 {
     if ( NULL == client ) {
         errno = EINVAL;

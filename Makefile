@@ -25,8 +25,8 @@ testlibshmlog.o: testlibshmlog.c libshmlog.h
 
 .PHONY: test
 test: testlibshmlog shmlogtail
-	./testlibshmlog $(TESTCNT) &
-	./shmlogtail $(TAILFLAGS) `pidof testlibshmlog`
+	./testlibshmlog $(TESTCNT) & \
+	sleep 0.1 && ./shmlogtail $(TAILFLAGS) $$!
 
 .PHONY: clean
 clean:

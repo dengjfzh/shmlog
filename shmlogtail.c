@@ -12,7 +12,12 @@
 #include <dirent.h>
 #include "libshmlogclient.h"
 
-#define SHM_FILE_PATH "/dev/shm"
+#define GET_HEAD(ht) SHMLOG_GET_HEAD(ht)
+#define GET_TAIL(ht) SHMLOG_GET_TAIL(ht)
+#define MAKE_HT(head, tail) SHMLOG_MAKE_HT(head, tail)
+#define INTHEAD_MAX SHMLOG_INTHEAD_MAX
+
+#define SHMLOG_FILE_PATH "/dev/shm"
 
 static int g_requestExit = 0;
 
@@ -115,14 +120,14 @@ int list()
     DIR *dir;
     struct dirent *dent;
     int pid, ret;
-    dir = opendir(SHM_FILE_PATH);
+    dir = opendir(SHMLOG_FILE_PATH);
     if ( NULL == dir ) {
         return -1;
     }
     while ( (dent = readdir(dir)) != NULL ) {
         if ( DT_REG == dent->d_type ) {
             //fprintf(stderr, "\tfind shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
-            if ( sscanf(dent->d_name, SHM_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
+            if ( sscanf(dent->d_name, SHMLOG_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
                 // get shared memory size
                 ret = fstatat(dirfd(dir), dent->d_name, &statbuf, 0);
                 if ( ret < 0 ) {
@@ -142,14 +147,19 @@ int list()
                         snprintf(size_str, sizeof(size_str), "%dM", size/1048576);
                     }
                 }
+                printf("%d  %s  ", pid, size_str);
                 // get process info
                 struct process_info_t info;
                 ret = get_process_info(pid, &info);
-                if ( ret == -1 && ENOENT == errno ) {
-                    printf("Process not found!\n");
+                if ( ret < 0 ) {
+                    if ( ESRCH == errno ) {
+                        printf("Process not found!\n");
+                    } else {
+                        printf("%d:%s", errno, strerror(errno));
+                    }
                     continue;
                 }
-                printf("%d  %s  %s  %s  %s\n", pid, size_str, info.username, info.exe, info.cmdline);
+                printf("%s  %s  %s\n", info.username, info.exe, info.cmdline);
             }
         }
     }
@@ -160,8 +170,8 @@ int list()
 int info(pid_t pid)
 {
     struct shm_log_client_t client;
-    int_headtail headtail;
-    int_head head, tail;
+    shmlog_int_headtail headtail;
+    shmlog_int_head head, tail;
     int consumer_pid, ret;
 
     ret = shmlogclient_init(pid, &client, 1);
@@ -236,6 +246,14 @@ int main(int argc, char *argv[])
     int64_t total_read, total_lost, total_lost_cnt, total_drop;
     char buf[1024];
 
+    // test
+    printf("shmlogtail: ");
+    for ( ret = 0; ret < argc; ret++ ) {
+        printf("%s ", argv[ret]);
+    }
+    printf("\n");
+    // test end
+    
     // command line parse
     opterr = 0;
     while ( (o = getopt_long(argc, argv, ":hp:bdli:", opts, NULL)) != EOF ) {

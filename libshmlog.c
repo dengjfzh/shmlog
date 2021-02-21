@@ -21,7 +21,7 @@ static void *g_addr = MAP_FAILED;
 static size_t g_size = 0;
 static struct shmlog_header *g_hdr = NULL;
 static struct shmlog_msg *g_msgs = NULL;
-static size_t g_msg_cnt = 0;
+static size_t g_remove_unused = 0;
 
 #if 1
 #define LOG(fmt, arg...) fprintf(stderr, fmt, ##arg)
@@ -29,11 +29,17 @@ static size_t g_msg_cnt = 0;
 #define LOG(fmt, arg...)
 #endif
 
+#define GET_HEAD(ht) SHMLOG_GET_HEAD(ht)
+#define GET_TAIL(ht) SHMLOG_GET_TAIL(ht)
+#define MAKE_HT(head, tail) SHMLOG_MAKE_HT(head, tail)
+#define INTHEAD_MAX SHMLOG_INTHEAD_MAX
+
+
 static void onexit()
 {
     if ( g_fd > 0 ) {
         char filename[256];
-        snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+        snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
         shm_unlink(filename);
         close(g_fd);
         g_fd = -1;
@@ -53,16 +59,16 @@ static int unlink_all_unuse()
     }
     errno = 0;
     while ( (dent = readdir(dir)) != NULL ) {
-        LOG("%s: ino=%ld, off=%ld, reclen=%d, type=0x%02x\n",
-            dent->d_name, dent->d_ino, dent->d_off, dent->d_reclen, dent->d_type);
+        //LOG("%s: ino=%ld, off=%ld, reclen=%d, type=0x%02x\n",
+        //    dent->d_name, dent->d_ino, dent->d_off, dent->d_reclen, dent->d_type);
         if ( DT_REG == dent->d_type ) {
-            LOG("find shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
-            if ( sscanf(dent->d_name, SHM_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
+            //LOG("find shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
+            if ( sscanf(dent->d_name, SHMLOG_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
                 snprintf(filename, sizeof(filename), "/proc/%d", pid);
-                LOG("found shm with pid %d\n", pid);
+                //LOG("found shm with pid %d\n", pid);
                 if ( stat(filename, &statbuf) == -1 && ENOENT == errno ) {
-                    LOG("process %d not found!\n", pid);
-                    snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", pid);
+                    LOG("found shm with pid %d, but process is not exist!\n", pid);
+                    snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", pid);
                     if ( shm_unlink(filename) >= 0 ) {
                         LOG("file '%s' has been deleted.\n", filename);
                     } else {
@@ -81,21 +87,23 @@ static int unlink_all_unuse()
     return 0;
 }
 
-int shmlog_init(size_t nmsg)
+int shmlog_init(size_t nmsg, int remove_unused)
 {
     int errno_bak;
     char filename[256];
     const size_t size = sizeof(struct shmlog_fullheader) + SHMLOG_MSG_SIZE * nmsg;
-    unlink_all_unuse();
+    if ( remove_unused ) {
+        unlink_all_unuse();
+    }
     if ( g_fd > 0 ) {
         return -1;
     }
     // clear global variables
     g_hdr = NULL;
     g_msgs = NULL;
-    g_msg_cnt = 0;
+    g_remove_unused = remove_unused;
     // open shm
-    snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+    snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
     g_fd = shm_open(filename, O_CREAT|O_RDWR, 0666);
     if ( g_fd < 0 ) {
         goto FAILED;
@@ -114,7 +122,6 @@ int shmlog_init(size_t nmsg)
     atomic_init(&g_hdr->consumer_pid, 0);
     atomic_init(&g_hdr->headtail, 0);
     g_msgs = (struct shmlog_msg *)(g_addr + sizeof(struct shmlog_fullheader));
-    g_msg_cnt = nmsg;
     for ( size_t i = 0; i < nmsg; i++ ) {
         atomic_init(&g_msgs[i].hdr.filled, false);
     }
@@ -134,7 +141,7 @@ FAILED:
     if ( g_fd > 0 ) {
         close(g_fd);
         g_fd = -1;
-        snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+        snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
         shm_unlink(filename);
     }
     errno = errno_bak;
@@ -151,7 +158,6 @@ void shmlog_uninit()
     g_fd = -1;
     g_hdr = NULL;
     g_msgs = NULL;
-    g_msg_cnt = 0;
     if ( MAP_FAILED != g_addr ) {
         munmap(g_addr, g_size);
         g_addr = MAP_FAILED;
@@ -159,19 +165,21 @@ void shmlog_uninit()
     g_size = 0;
     if ( fd > 0 ) {
         close(fd);
-        snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+        snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
         shm_unlink(filename);
     }
-    unlink_all_unuse();
+    if ( g_remove_unused ) {
+        unlink_all_unuse();
+    }
 }
 
 int shmlog_write(const void *data, size_t len)
 {
-    int_headtail ht_old, ht_new;
-    int_head head, tail, head_new, tail_new;
+    shmlog_int_headtail ht_old, ht_new;
+    shmlog_int_head head, tail, head_new, tail_new;
     bool full;
     int full_retry, full_wait;
-    if ( g_fd < 0 || NULL == g_hdr || NULL == g_msgs || 0 == g_msg_cnt ) {
+    if ( g_fd < 0 || NULL == g_hdr || NULL == g_msgs ) {
         return -1;
     }
     if ( len > SHMLOG_MSG_BODY_SIZE ) {
@@ -215,7 +223,7 @@ int shmlog_write(const void *data, size_t len)
             // overwrite oldest msg
             head_new = head + 1;
             if ( head_new >= INTHEAD_MAX ) {
-                int_head tmp = (head_new / g_hdr->nmsg) * g_hdr->nmsg;
+                shmlog_int_head tmp = (head_new / g_hdr->nmsg) * g_hdr->nmsg;
                 head_new -= tmp;
                 tail_new -= tmp;
             }
@@ -239,4 +247,23 @@ int shmlog_write(const void *data, size_t len)
     g_msgs[tail].hdr.len = len;
     atomic_store(&g_msgs[tail].hdr.filled, true);
     return len;
+}
+
+int shmlog_vprintf(const char *fmt, va_list ap)
+{
+    char msg[SHMLOG_MSG_BODY_SIZE];
+    int len;
+    len = vsnprintf(msg, sizeof(msg), fmt, ap);
+    if ( len < 0 )
+        return len;
+    return shmlog_write(msg, len);
+}
+
+int shmlog_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = shmlog_vprintf(fmt, ap);
+    va_end(ap);
+    return ret;
 }

@@ -13,10 +13,10 @@ struct shm_log_client_t {
     size_t size;
     struct shmlog_header *hdr;
     struct shmlog_msg *msgs;
-    int_headtail last_head;
+    shmlog_int_head last_head;
     int nonblock;
     pid_t pid_self;
-    int_headtail remain; // the number of remaining message in buffer after reading
+    shmlog_int_head remain; // the number of remaining message in buffer after reading
 };
 
 int shmlogclient_init(pid_t pid, struct shm_log_client_t *client, int nonblock);
@@ -25,7 +25,7 @@ int shmlogclient_read(struct shm_log_client_t *client, void *buf, size_t size, s
 
 // zero-copy read (return buffer address)
 int shmlogclient_zerocopy_read(struct shm_log_client_t *client, void **pbuf, size_t *plen, size_t *lost, int timeout_us); // return buffer id on success or -1 on error
-int shmlogclient_zerocopy_free(struct shm_log_client_t *client, int_headtail bufid);
+int shmlogclient_zerocopy_free(struct shm_log_client_t *client, shmlog_int_headtail bufid);
     
 #ifdef __cplusplus
 }
