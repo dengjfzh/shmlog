@@ -2,7 +2,8 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
-// #include <stdatomic.h> // C11
+#include <threads.h>
+#include <signal.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/mman.h>
@@ -12,6 +13,7 @@
 #include "libshmlog.h"
 
 #define SHM_FILE_PATH "/dev/shm"
+#define FULL_RETRY_MAX 16
 
 static int g_regAtexit = 0;
 static int g_fd = -1;
@@ -19,7 +21,7 @@ static void *g_addr = MAP_FAILED;
 static size_t g_size = 0;
 static struct shmlog_header *g_hdr = NULL;
 static struct shmlog_msg *g_msgs = NULL;
-static size_t g_msg_cnt = 0;
+static size_t g_remove_unused = 0;
 
 #if 1
 #define LOG(fmt, arg...) fprintf(stderr, fmt, ##arg)
@@ -27,11 +29,17 @@ static size_t g_msg_cnt = 0;
 #define LOG(fmt, arg...)
 #endif
 
+#define GET_HEAD(ht) SHMLOG_GET_HEAD(ht)
+#define GET_TAIL(ht) SHMLOG_GET_TAIL(ht)
+#define MAKE_HT(head, tail) SHMLOG_MAKE_HT(head, tail)
+#define INTHEAD_MAX SHMLOG_INTHEAD_MAX
+
+
 static void onexit()
 {
     if ( g_fd > 0 ) {
         char filename[256];
-        snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+        snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
         shm_unlink(filename);
         close(g_fd);
         g_fd = -1;
@@ -51,16 +59,16 @@ static int unlink_all_unuse()
     }
     errno = 0;
     while ( (dent = readdir(dir)) != NULL ) {
-        LOG("%s: ino=%ld, off=%ld, reclen=%d, type=0x%02x\n",
-            dent->d_name, dent->d_ino, dent->d_off, dent->d_reclen, dent->d_type);
+        //LOG("%s: ino=%ld, off=%ld, reclen=%d, type=0x%02x\n",
+        //    dent->d_name, dent->d_ino, dent->d_off, dent->d_reclen, dent->d_type);
         if ( DT_REG == dent->d_type ) {
-            LOG("find shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
-            if ( sscanf(dent->d_name, SHM_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
+            //LOG("find shm: %s, type=0x%x\n", dent->d_name, dent->d_type);
+            if ( sscanf(dent->d_name, SHMLOG_FILE_PREFIX "%d", &pid) == 1 && pid > 0 ) {
                 snprintf(filename, sizeof(filename), "/proc/%d", pid);
-                LOG("found shm with pid %d\n", pid);
+                //LOG("found shm with pid %d\n", pid);
                 if ( stat(filename, &statbuf) == -1 && ENOENT == errno ) {
-                    LOG("process %d not found!\n", pid);
-                    snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", pid);
+                    LOG("found shm with pid %d, but process is not exist!\n", pid);
+                    snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", pid);
                     if ( shm_unlink(filename) >= 0 ) {
                         LOG("file '%s' has been deleted.\n", filename);
                     } else {
@@ -79,21 +87,23 @@ static int unlink_all_unuse()
     return 0;
 }
 
-int shmlog_init(size_t nmsg)
+int shmlog_init(size_t nmsg, int remove_unused)
 {
     int errno_bak;
     char filename[256];
     const size_t size = sizeof(struct shmlog_fullheader) + SHMLOG_MSG_SIZE * nmsg;
-    unlink_all_unuse();
+    if ( remove_unused ) {
+        unlink_all_unuse();
+    }
     if ( g_fd > 0 ) {
         return -1;
     }
     // clear global variables
     g_hdr = NULL;
     g_msgs = NULL;
-    g_msg_cnt = 0;
+    g_remove_unused = remove_unused;
     // open shm
-    snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+    snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
     g_fd = shm_open(filename, O_CREAT|O_RDWR, 0666);
     if ( g_fd < 0 ) {
         goto FAILED;
@@ -109,9 +119,12 @@ int shmlog_init(size_t nmsg)
     g_size = size;
     g_hdr = (struct shmlog_header *)g_addr;
     g_hdr->nmsg = nmsg;
-    atomic_init(&g_hdr->next, 0);
+    atomic_init(&g_hdr->consumer_pid, 0);
+    atomic_init(&g_hdr->headtail, 0);
     g_msgs = (struct shmlog_msg *)(g_addr + sizeof(struct shmlog_fullheader));
-    g_msg_cnt = nmsg;
+    for ( size_t i = 0; i < nmsg; i++ ) {
+        atomic_init(&g_msgs[i].hdr.filled, false);
+    }
     // register an exit function to unlink shm
     if ( 0 == g_regAtexit ) {
         g_regAtexit = 1;
@@ -128,7 +141,7 @@ FAILED:
     if ( g_fd > 0 ) {
         close(g_fd);
         g_fd = -1;
-        snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+        snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
         shm_unlink(filename);
     }
     errno = errno_bak;
@@ -145,7 +158,6 @@ void shmlog_uninit()
     g_fd = -1;
     g_hdr = NULL;
     g_msgs = NULL;
-    g_msg_cnt = 0;
     if ( MAP_FAILED != g_addr ) {
         munmap(g_addr, g_size);
         g_addr = MAP_FAILED;
@@ -153,27 +165,105 @@ void shmlog_uninit()
     g_size = 0;
     if ( fd > 0 ) {
         close(fd);
-        snprintf(filename, sizeof(filename), SHM_FILE_PREFIX "%d", getpid());
+        snprintf(filename, sizeof(filename), SHMLOG_FILE_PREFIX "%d", getpid());
         shm_unlink(filename);
     }
-    unlink_all_unuse();
+    if ( g_remove_unused ) {
+        unlink_all_unuse();
+    }
 }
 
 int shmlog_write(const void *data, size_t len)
 {
-    if ( g_fd < 0 || NULL == g_hdr || NULL == g_msgs || 0 == g_msg_cnt ) {
+    shmlog_int_headtail ht_old, ht_new;
+    shmlog_int_head head, tail, head_new, tail_new;
+    bool full;
+    int full_retry, full_wait;
+    if ( g_fd < 0 || NULL == g_hdr || NULL == g_msgs ) {
         return -1;
     }
     if ( len > SHMLOG_MSG_BODY_SIZE ) {
         len = SHMLOG_MSG_BODY_SIZE;
     }
-    uint32_t mine = atomic_fetch_add(&g_hdr->next, 1);
-    mine %= g_msg_cnt;
-    g_msgs[mine].hdr.len = 0;
-    memcpy(g_msgs[mine].body, data, len);
-    if ( len < SHMLOG_MSG_BODY_SIZE ) {
-        memset(g_msgs[mine].body+len, 0, SHMLOG_MSG_BODY_SIZE-len);
+    full_retry = 0;
+    full_wait = 1;
+    ht_old = atomic_load(&g_hdr->headtail);
+    do {
+        head = GET_HEAD(ht_old);
+        tail = GET_TAIL(ht_old);
+        if ( head > tail ) {
+            LOG("[dengjfzh/libshmlog] Internal Error: head(%u) > tail(%u)! %s:%d\n",
+                head, tail, __FILE__, __LINE__);
+            abort();
+        }
+        head_new = head;
+        tail_new = tail + 1;
+        if ( (tail_new - head_new) > g_hdr->nmsg ) { // full
+            const pid_t consumer_pid = atomic_load(&g_hdr->consumer_pid);
+            if ( consumer_pid > 0 ) {
+                if ( full_retry < FULL_RETRY_MAX ) {
+                    // wait a moment if there is a consumer
+                    full = true;
+                    full_retry++;
+                    if ( full_wait < 65536 ) {
+                        full_wait *= 2;
+                    }
+                    usleep(full_wait);
+                    ht_old = atomic_load(&g_hdr->headtail);
+                    continue;
+                }
+                // consumer timeout, remve it
+                if ( kill(consumer_pid, 0) < 0 && ESRCH == errno ) {
+                    if ( atomic_compare_exchange_strong(&g_hdr->consumer_pid, &consumer_pid, 0) ) {
+                        LOG("[dengjfzh/libshmlog] Warning: consumer %d has been removed! %s:%d\n",
+                            consumer_pid, __FILE__, __LINE__);
+                    }
+                }
+            }
+            // overwrite oldest msg
+            head_new = head + 1;
+            if ( head_new >= INTHEAD_MAX ) {
+                shmlog_int_head tmp = (head_new / g_hdr->nmsg) * g_hdr->nmsg;
+                head_new -= tmp;
+                tail_new -= tmp;
+            }
+        }
+        full = false;
+        full_retry = 0;
+        full_wait = 1;
+        ht_new = MAKE_HT(head_new, tail_new);
+    } while ( full || !atomic_compare_exchange_weak(&g_hdr->headtail, &ht_old, ht_new) );
+    if ( head_new != head ) { // oldest msg has been removed
+        head %= g_hdr->nmsg;
+        atomic_store(&g_msgs[head].hdr.filled, false);
     }
-    g_msgs[mine].hdr.len = len;
-    return 0;
+    if ( tail >= g_hdr->nmsg ) {
+        tail %= g_hdr->nmsg;
+    }
+    while ( atomic_load(&g_msgs[tail].hdr.filled) ) {
+        thrd_yield();
+    }
+    memcpy(g_msgs[tail].body, data, len);
+    g_msgs[tail].hdr.len = len;
+    atomic_store(&g_msgs[tail].hdr.filled, true);
+    return len;
+}
+
+int shmlog_vprintf(const char *fmt, va_list ap)
+{
+    char msg[SHMLOG_MSG_BODY_SIZE];
+    int len;
+    len = vsnprintf(msg, sizeof(msg), fmt, ap);
+    if ( len < 0 )
+        return len;
+    return shmlog_write(msg, len);
+}
+
+int shmlog_printf(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    int ret = shmlog_vprintf(fmt, ap);
+    va_end(ap);
+    return ret;
 }

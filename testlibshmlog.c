@@ -7,30 +7,51 @@
 #include <sys/time.h>
 #include "libshmlog.h"
 
+#if 1
+#define LOG(fmt, arg...) fprintf(stderr, "<%s:%d> " fmt, __FILE__, __LINE__, ##arg)
+#else
+#define LOG(fmt, arg...)
+#endif
+
 int main(int argc, char *argv[])
 {
-    char msg[1024];
-    int cnt, i, len;
+    char msg[SHMLOG_MSG_SIZE];
+    int cnt, delay, failed_cnt, i, len, ret;
     struct timeval start, end, escape;
     double fEscape;
-    fprintf(stderr, "testlibshmlog: start ...\n");
+    fprintf(stderr, "testlibshmlog: start ... (pid:%d)\n", getpid());
     cnt = 200;
+    delay = -1;
+    failed_cnt = 0;
     if ( argc > 1 ) {
         cnt = atoi(argv[1]);
         if ( cnt <= 0 ) {
             fprintf(stderr, "testlibshmlog: Error: invalid number: %s\n", argv[1]);
         }
     }
-    shmlog_init(16384);
+    if ( argc > 2 ) {
+        delay = atoi(argv[2]);
+        if ( delay <= 0 ) {
+            fprintf(stderr, "testlibshmlog: Error: invalid number: %s\n", argv[2]);
+        }
+    }
+    shmlog_init(64, 1);
+    LOG("shmlog has been initialized.\n");
     usleep(1000*500);
     gettimeofday(&start, NULL);
     for ( i = 0; i < cnt; i++ ) {
-        //len = sprintf(msg, "msg %d", i);
-        memset(msg, '0' + i%10, 400);
-        len = 400;
-        shmlog_write(msg, len);
-        //usleep(1);
-        //thrd_yield();
+        len = sprintf(msg, "%d:", i);
+        memset(msg+len, '0' + i%10, SHMLOG_MSG_SIZE/2-len);
+        len = SHMLOG_MSG_SIZE/2;
+        ret = shmlog_write(msg, len);
+        if ( ret <= 0 ) {
+            failed_cnt++;
+        }
+        if ( 0 == delay ) {
+            thrd_yield();
+        } else if ( delay > 0 ) {
+            usleep(delay);
+        }
     }
     gettimeofday(&end, NULL);
     escape.tv_sec = end.tv_sec - start.tv_sec;
@@ -41,8 +62,8 @@ int main(int argc, char *argv[])
         escape.tv_sec--;
     }
     fEscape = escape.tv_sec + escape.tv_usec / 1000000.0;
-    len = snprintf(msg, sizeof(msg), "testlibshmlog: end. %d log, escape %ld.%06lds, %.1f/s", i, escape.tv_sec, escape.tv_usec, i/fEscape);
-    shmlog_write(msg, len);
+    shmlog_printf("testlibshmlog: end. %d log, %d failed, escape %ld.%06lds, %.1f/s", i, failed_cnt, escape.tv_sec, escape.tv_usec, i/fEscape);
     shmlog_uninit();
+    fprintf(stderr, "testlibshmlog: END. %d log, %d failed, escape %ld.%06lds, %.1f/s\n", i, failed_cnt, escape.tv_sec, escape.tv_usec, i/fEscape);
     return 0;
 }

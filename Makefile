@@ -25,11 +25,19 @@ testlibshmlog.o: testlibshmlog.c libshmlog.h
 
 .PHONY: test
 test: testlibshmlog shmlogtail
-	./testlibshmlog $(TESTCNT) &
-	./shmlogtail `pidof testlibshmlog`
+	./testlibshmlog $(TESTCNT) & \
+	sleep 0.1 && ./shmlogtail $(TAILFLAGS) $$!
 
 .PHONY: clean
 clean:
 	@rm -f *.o libshmlog.so libshmlogclient.so testlibshmlog shmlogtail
 
 TESTCNT := 1000000
+BLOCK := 0
+DROP := 0
+	ifneq ($(BLOCK),0)
+TAILFLAGS += --block
+	endif
+	ifneq ($(DROP),0)
+TAILFLAGS += --drop
+	endif
